@@ -1,11 +1,18 @@
 package swiss.sib.swissprot.fsst4j;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.lang.management.ManagementFactory;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -18,7 +25,18 @@ import nl.cwi.da.fsst.fsst;
 public class FSST {
 	private static final byte[] FSST_CORRUPT = new byte[] { 'c', 'o', 'r', 'r', 'u', 'p', 't' };
 	static {
-		System.loadLibrary("fsst");
+		try {
+			File fsstTmp = File.createTempFile("libfsst", ".so");
+			fsstTmp.deleteOnExit();
+			String arch = ManagementFactory.getOperatingSystemMXBean().getArch();
+			String osName = ManagementFactory.getOperatingSystemMXBean().getName();
+			try (InputStream in = FSST.class.getResourceAsStream('/'+osName + '/' + arch + "/libfsst.so")) {
+				Files.copy(in, fsstTmp.toPath(), StandardCopyOption.REPLACE_EXISTING);
+			}
+			System.load(fsstTmp.getAbsolutePath());
+		} catch (IOException e) {
+			System.loadLibrary("fsst");
+		}
 	}
 
 	public static FsstCompressedData compress(String[] strings) {
