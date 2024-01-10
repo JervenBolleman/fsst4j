@@ -16,3 +16,7 @@ make
 ```
 The building of shared libs is required
 
+# Thanks to the FSST developers
+
+I would like to thank the [FSST](https://github.com/cwida/fsst) developers for writing this really nice code and making it open source, 
+documenting and presenting it.
