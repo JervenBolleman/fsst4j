@@ -1,6 +1,6 @@
 # Protoypical bindings for using FSST in java
 
-Using panama/jextract. 
+Using panama/jextract. "Working" but not at all ready for prime time. See issues for things to be done.
 
 # Decompressor
 
