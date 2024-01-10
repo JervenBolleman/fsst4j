@@ -83,7 +83,7 @@
 				<version>0.1.0</version>
 				<configuration>
 					<executable>${user.home}/bin/jextract-21/bin/jextract</executable>
-					<headerSearchPaths>/usr/include/</headerSearchPaths>
+					<headerSearchPaths>/usr/include/:${user.home}/git/fsst/</headerSearchPaths>
 				</configuration>
 				<executions>
 					<execution>

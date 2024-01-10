@@ -1,5 +1,6 @@
 package swiss.sib.swissprot.fsst4j;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 import java.util.ArrayList;
@@ -9,9 +10,6 @@ import org.junit.Test;
 
 import swiss.sib.swissprot.fsst4j.FSST.FsstCompressedData;
 
-/**
- * Unit test for simple App.
- */
 public class FSSTTest {
 
 	@Test
@@ -26,5 +24,11 @@ public class FSSTTest {
 		assertNotNull(compress);
 		assertNotNull(compress.compressedData());
 		assertNotNull(compress.compressedLengths());
+		assertNotNull(compress.encoderSerialized());
+		List<String> decoded = compress.decodeAsStrings();
+		assertNotNull(decoded);
+		for (int i = 0; i < size; i++) {
+			assertEquals(input.get(i), decoded.get(i));
+		}
 	}
 }
