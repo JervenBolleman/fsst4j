@@ -1,0 +1,115 @@
+# Drafts a release: builds libfsst on all platforms (native.yml), bundles the libraries in the multi-release
+# fsst4j jar, and creates a draft GitHub release with the library and cli jars.
+#
+# Optionally deploys the parent pom and the library to Maven Central (central.sonatype.com). The deployment is
+# uploaded and validated, but must then be published from the Central Portal (set central.autoPublish to true in the
+# release profile of pom.xml to publish directly). Deploying needs these repository secrets:
+#   CENTRAL_USERNAME, CENTRAL_TOKEN  a user token of the Central Portal, for an account owning the
+#                                    swiss.sib.swissprot namespace
+#   GPG_PRIVATE_KEY, GPG_PASSPHRASE  an armored private key (gpg --armor --export-secret-keys KEYID) whose public key
+#                                    is on a key server (e.g. keys.openpgp.org)
+#
+# Start it from the Actions tab (with the version to release) or by pushing a tag v<version>. A tag push only
+# deploys to Central if the repository variable DEPLOY_TO_CENTRAL is 'true'.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.0.0'
+        required: true
+      deploy-to-central:
+        description: 'Deploy to Maven Central'
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    uses: ./.github/workflows/native.yml
+
+  release:
+    needs: native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the draft release
+    env:
+      DEPLOY: ${{ (github.event_name == 'workflow_dispatch' && inputs.deploy-to-central) || (github.event_name == 'push' && vars.DEPLOY_TO_CENTRAL == 'true') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Determine the version
+        run: |
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Releasing $VERSION, deploy to central: $DEPLOY"
+
+      - name: Download the native libraries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-*
+          path: ${{ runner.temp }}/native
+
+      - name: Bundle the native libraries in the library resources
+        run: |
+          RESOURCES=lib/src/main/resources/native
+          for dir in "$RUNNER_TEMP"/native/native-*; do
+            platform="${dir##*/native-}"
+            rm -rf "$RESOURCES/$platform"
+            mkdir -p "$RESOURCES/$platform"
+            cp "$dir"/* "$RESOURCES/$platform/"
+          done
+          echo "## Bundled native libraries" >> "$GITHUB_STEP_SUMMARY"
+          ( cd "$RESOURCES" && find . -type f | sort | sed 's/^\.\//- /' ) | tee -a "$GITHUB_STEP_SUMMARY"
+          # the platforms that must be there (experimental ones in native.yml may be missing)
+          for platform in linux-amd64 linux-aarch64 macos-aarch64 macos-amd64 windows-amd64; do
+            test -n "$(ls -A "$RESOURCES/$platform" 2>/dev/null)" || { echo "::error::missing $platform"; exit 1; }
+          done
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+          # writes a settings.xml with the central server, credentials are taken from the environment
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_TOKEN
+          gpg-private-key: ${{ env.DEPLOY == 'true' && secrets.GPG_PRIVATE_KEY || '' }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Set the version
+        run: ./mvnw -B -ntp versions:set -DnewVersion="$VERSION" -DprocessAllModules -DgenerateBackupPoms=false
+
+      - name: Build
+        if: env.DEPLOY != 'true'
+        run: ./mvnw -B -ntp -Prelease -Dgpg.skip verify
+
+      - name: Build and deploy to Maven Central
+        if: env.DEPLOY == 'true'
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./mvnw -B -ntp -Prelease deploy
+
+      - name: Check the jar contains the native libraries
+        run: unzip -l "lib/target/fsst4j-$VERSION.jar" | grep 'native/'
+
+      - name: Create the draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" --draft --target "$GITHUB_SHA" --title "fsst4j $VERSION" --generate-notes \
+            "lib/target/fsst4j-$VERSION.jar" \
+            "lib/target/fsst4j-$VERSION-sources.jar" \
+            "lib/target/fsst4j-$VERSION-javadoc.jar" \
+            "cli/target/fsst4j-cli-$VERSION.jar"

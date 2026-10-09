@@ -155,15 +155,47 @@ When the submodule is present, `scripts/build-native.sh` is run by maven to buil
 * test edge cases: empty batches and strings, strings longer than the 511 byte chunks, binary data, decompression
   into too small buffers against the C++ decompressor, C strings in native memory (`EdgeCaseTest`)
 
-The precompiled library shipped in the jar (`lib/src/main/resources/Linux/amd64/libfsst.so`) is updated with
-`scripts/build-native.sh --install`. It is built without `-march=native` so it runs on any x86-64 CPU (the AVX512
+Native libraries are bundled in the jar as `native/<os>-<arch>/<library>` (`linux|macos|windows` -
+`amd64|aarch64`, see `NativeFsst.platform()`). The repository contains only `lib/src/main/resources/native/linux-amd64/libfsst.so`,
+updated with `scripts/build-native.sh --install`; release jars contain all platforms (see below). It is built without `-march=native` so it runs on any x86-64 CPU (the AVX512
 kernel is only used after a runtime check). The library can be overridden with `-Dfsst4j.library=/path/libfsst.so`.
+
+## Continuous integration and releases
+
+GitHub Actions workflows in `.github/workflows`:
+
+* `native.yml` (reusable): builds libfsst and the upstream `fsst` tool for linux-amd64, linux-aarch64 (in
+  manylinux_2_28 containers: glibc 2.28+, libstdc++ linked statically), macos-aarch64, macos-amd64, windows-amd64
+  (MinGW-w64) and, experimentally, windows-aarch64 (clang), runs the library tests against each build and uploads the
+  libraries as artifacts.
+* `ci.yml`: on pushes to main and pull requests: `native.yml`, the full build with Java 25, and a check that the
+  jars work on Java 11.
+* `release.yml`: started from the Actions tab with a version (or by pushing a tag `v<version>`). Runs `native.yml`,
+  bundles all native libraries into the library jar, builds with `-Prelease` (sources and javadoc jars) and creates a
+  **draft** GitHub release with the library and cli jars. The version is set in the build only; it is not committed.
+
+Deploying to Maven Central is prepared but off by default: tick "Deploy to Maven Central" when starting the release
+workflow (or set the repository variable `DEPLOY_TO_CENTRAL` to `true` for tag pushes). It needs:
+
+1. the `swiss.sib.swissprot` namespace verified for your account on https://central.sonatype.com
+2. repository secrets `CENTRAL_USERNAME` and `CENTRAL_TOKEN` (a Central Portal user token)
+3. repository secrets `GPG_PRIVATE_KEY` (`gpg --armor --export-secret-keys KEYID`) and `GPG_PASSPHRASE`, with the
+   public key published on a key server
+
+The parent pom and `fsst4j` are uploaded (the cli is not), validated, and then wait in the Central Portal to be
+published by hand; set `central.autoPublish` to `true` in the parent pom's release profile to publish directly.
+
+The build uses the Maven wrapper (`./mvnw`) so all platforms use the same Maven.
 
 ### Compatibility notes
 
 * The java port replicates libfsst exactly, including the 12 bit pair counters that may overflow into their
   neighbours. One quirk is platform dependent: the C++ compares a `char` with the terminator byte, and `char` is
-  signed on x86 but unsigned on ARM. The java port follows x86.
+  signed on x86 but unsigned on ARM. The java port follows x86, and `scripts/build-native.sh` compiles with
+  `-fsigned-char`, so the native libraries produce identical output on all platforms (checked by `EdgeCaseTest`).
+* On Windows libfsst is built with MinGW-w64. Two upstream portability problems are worked around in the build script:
+  `__builtin_ctzl` is used on 64 bit values (but `long` is 32 bits on Windows) and `__cpuidex` is used without
+  including `intrin.h`.
 * Only 64 bit, little endian platforms are supported by the native bindings and the vector kernel.
 * `NativeFsst`, `FsstVectorCompressor` and `VectorKernel` only exist in `META-INF/versions/25`. `jar --validate`
   warns about such version-only public classes; they are intentionally not part of the java 11 API.

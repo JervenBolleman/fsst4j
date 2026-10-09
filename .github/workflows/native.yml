@@ -1,0 +1,103 @@
+# Builds libfsst (with the fsst4j shim) on every supported platform and runs the library tests against it, i.e. the
+# FSST paper corpus through the java and native implementations (identical output required) and the round trip
+# with the upstream fsst tool. Each platform's library is uploaded as artifact native-<os>-<arch>, ready to be put in
+# lib/src/main/resources/native/<os>-<arch>/ (see NativeFsst.platform()).
+#
+# Used by ci.yml and release.yml.
+name: Native libraries
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    # windows on arm is built with clang from msys2, not yet verified: do not fail the workflow for it
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds run in manylinux_2_28 containers (glibc 2.28, libstdc++ linked statically), so the
+          # library loads on RHEL/Alma/Rocky 8, Debian 10, Ubuntu 18.10 and newer.
+          - platform: linux-amd64
+            runner: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            experimental: false
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            experimental: false
+          - platform: macos-aarch64
+            runner: macos-latest
+            experimental: false
+          - platform: macos-amd64
+            runner: macos-15-intel
+            experimental: false
+          - platform: windows-amd64
+            runner: windows-latest
+            msystem: MINGW64
+            toolchain: mingw-w64-x86_64-gcc
+            cxx: g++
+            experimental: false
+          - platform: windows-aarch64
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            toolchain: mingw-w64-clang-aarch64-clang
+            cxx: clang++
+            experimental: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Build in ${{ matrix.container }}
+        if: matrix.container
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/w" -w /w ${{ matrix.container }}
+          scripts/build-native.sh --install
+
+      - name: Build
+        if: runner.os == 'macOS'
+        run: scripts/build-native.sh --install
+
+      - name: Set up MSYS2 ${{ matrix.msystem }}
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          install: ${{ matrix.toolchain }}
+
+      - name: Build
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          CXX: ${{ matrix.cxx }}
+        run: scripts/build-native.sh --install
+
+      - name: Check the library is in the expected platform directory
+        shell: bash
+        run: |
+          ls -la "lib/src/main/resources/native/${{ matrix.platform }}/"
+          test -n "$(ls -A "lib/src/main/resources/native/${{ matrix.platform }}/")"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+
+      # the native profile is disabled, the library and the fsst tool were built above (in lib/target/native)
+      - name: Test the library against the native build
+        shell: bash
+        run: ./mvnw -B -ntp -pl lib '-P!native' verify
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.platform }}
+          path: lib/src/main/resources/native/${{ matrix.platform }}/
+          if-no-files-found: error

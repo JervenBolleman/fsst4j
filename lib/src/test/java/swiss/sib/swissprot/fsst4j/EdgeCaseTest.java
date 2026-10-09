@@ -40,6 +40,7 @@ class EdgeCaseTest {
 		args.add(Arguments.of("all empty", Collections.nCopies(100, new byte[0])));
 		args.add(Arguments.of("single byte runs", randomRuns(3)));
 		args.add(Arguments.of("terminator above 127", rareHighTerminator()));
+		args.add(Arguments.of("terminator above 127 in symbols", terminatorInSymbols()));
 		args.add(Arguments.of("tiny", List.of("a".getBytes())));
 		args.add(Arguments.of("no strings", List.of()));
 		return args.stream();
@@ -79,6 +80,25 @@ class EdgeCaseTest {
 			}
 		}
 		strings.add(new byte[] { (byte) 200, (byte) 200, (byte) 200, 'a', 'b' });
+		return strings;
+	}
+
+	/**
+	 * A small batch (no sampling) in which every byte value occurs, byte 200 least often, but in repeated pairs so it
+	 * ends up in multi-byte symbols. A signed char C++ build excludes no symbols starting with it, an unsigned char
+	 * build does: this case detects a libfsst that was not built with -fsigned-char.
+	 */
+	static List<byte[]> terminatorInSymbols() {
+		List<byte[]> strings = new ArrayList<>();
+		for (int b = 0; b < 256; b++) {
+			if (b != 200) {
+				strings.add(new byte[] { (byte) b, (byte) b, (byte) b, (byte) b });
+			}
+		}
+		for (int i = 0; i < 3; i++) {
+			strings.add(new byte[] { 'x', (byte) 200, 'q', 'q' });
+		}
+		strings.addAll(randomStrings(13, 400, 2, 12, 3));
 		return strings;
 	}
 
@@ -238,6 +258,12 @@ class EdgeCaseTest {
 		ByteStrings strings = ByteStrings.of(rareHighTerminator());
 		FsstEncoder encoder = FsstEncoder.build(strings, false);
 		assertTrue(encoder.st.terminator >= 128, "terminator " + encoder.st.terminator);
+	}
+
+	@Test
+	void terminatorInSymbolsUsesHighTerminator() {
+		FsstEncoder encoder = FsstEncoder.build(ByteStrings.of(terminatorInSymbols()), false);
+		assertEquals(200, encoder.st.terminator);
 	}
 
 	@Test

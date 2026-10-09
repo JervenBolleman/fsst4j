@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # build and test libfsst on all platforms
+  native:
+    uses: ./.github/workflows/native.yml
+
+  # the full build (library and cli) with java 25
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+      - name: Build and test
+        run: ./mvnw -B -ntp verify
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jars
+          path: |
+            lib/target/fsst4j-*.jar
+            cli/target/fsst4j-cli-*.jar
+          if-no-files-found: error
+
+  # the multi-release jar must work on java 11, with the pure java implementation
+  java11:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: jars
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 11
+      - name: Run the cli on java 11
+        run: |
+          set -x
+          CLI=$(ls cli/target/fsst4j-cli-*.jar | grep -v original)
+          java -version
+          java -jar "$CLI" info | tee info.txt
+          grep -qP "^JAVA\tavailable" info.txt
+          seq 1 200000 | sed 's/^/https:\/\/www.uniprot.org\/uniprotkb\/P/' > urls.txt
+          java -jar "$CLI" compress urls.txt urls.fsst
+          java -jar "$CLI" decompress urls.fsst urls.back
+          cmp urls.txt urls.back
+          java -jar "$CLI" lines urls.txt
+          ! java -jar "$CLI" compress -i native urls.txt native.fsst

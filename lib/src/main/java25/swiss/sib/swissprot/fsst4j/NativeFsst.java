@@ -16,6 +16,7 @@ import java.lang.invoke.MethodHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 import java.util.Optional;
 
 import swiss.sib.swissprot.fsst4j.FSST.FsstCompressedData;
@@ -25,8 +26,10 @@ import swiss.sib.swissprot.fsst4j.FSST.FsstCompressedData;
  *
  * The library is looked for in this order:
  * <ol>
- * <li>the file named by the system property {@code fsst4j.library}, if it exists</li>
- * <li>the precompiled library in the jar, at /&lt;os.name&gt;/&lt;os.arch&gt;/libfsst.so</li>
+ * <li>the file named by the system property {@code fsst4j.library}, if it exists. It may also name a directory
+ * containing the library.</li>
+ * <li>the precompiled library in the jar, at /native/&lt;os&gt;-&lt;arch&gt;/&lt;library&gt;, see {@link #platform()} and
+ * {@link #libraryFileName()}, e.g. /native/linux-amd64/libfsst.so</li>
  * <li>libfsst on the java.library.path</li>
  * </ol>
  * Use {@link #isAvailable()} to check if the native library could be loaded. Needs
@@ -102,13 +105,20 @@ public final class NativeFsst {
 
 	private static SymbolLookup loadLibrary() throws IOException {
 		String configured = System.getProperty("fsst4j.library");
-		if (configured != null && Files.isRegularFile(Path.of(configured))) {
-			return SymbolLookup.libraryLookup(Path.of(configured), Arena.global());
+		if (configured != null) {
+			Path path = Path.of(configured);
+			if (Files.isDirectory(path)) {
+				path = path.resolve(libraryFileName());
+			}
+			if (Files.isRegularFile(path)) {
+				return SymbolLookup.libraryLookup(path, Arena.global());
+			}
 		}
-		String resource = '/' + System.getProperty("os.name") + '/' + System.getProperty("os.arch") + "/libfsst.so";
+		String library = libraryFileName();
+		String resource = "/native/" + platform() + '/' + library;
 		try (InputStream in = NativeFsst.class.getResourceAsStream(resource)) {
 			if (in != null) {
-				Path tmp = Files.createTempFile("libfsst", ".so");
+				Path tmp = Files.createTempFile("fsst4j-", '-' + library);
 				tmp.toFile().deleteOnExit();
 				Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
 				return SymbolLookup.libraryLookup(tmp, Arena.global());
@@ -116,6 +126,35 @@ public final class NativeFsst {
 		}
 		System.loadLibrary("fsst");
 		return SymbolLookup.loaderLookup();
+	}
+
+	/**
+	 * @return the platform directory of the bundled library: os-arch, with os one of linux, macos, windows and arch
+	 *         the normalized os.arch (amd64, aarch64, ...). The same names are used by scripts/build-native.sh.
+	 */
+	public static String platform() {
+		String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+		if (os.startsWith("linux")) {
+			os = "linux";
+		} else if (os.startsWith("mac") || os.startsWith("darwin")) {
+			os = "macos";
+		} else if (os.startsWith("windows")) {
+			os = "windows";
+		} else {
+			os = os.replaceAll("[^a-z0-9]", "");
+		}
+		String arch = System.getProperty("os.arch").toLowerCase(Locale.ROOT);
+		switch (arch) {
+		case "x86_64", "x64", "amd64" -> arch = "amd64";
+		case "arm64", "aarch64" -> arch = "aarch64";
+		default -> arch = arch.replaceAll("[^a-z0-9]", "");
+		}
+		return os + '-' + arch;
+	}
+
+	/** @return the file name of the native library on this platform */
+	public static String libraryFileName() {
+		return System.mapLibraryName("fsst");
 	}
 
 	/** @return true if the native library was loaded */

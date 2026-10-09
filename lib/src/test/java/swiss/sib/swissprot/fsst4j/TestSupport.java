@@ -30,6 +30,7 @@ public final class TestSupport {
 
 	/** the upstream fsst command line tool, built by scripts/build-native.sh */
 	public static Path fsstTool() {
-		return Path.of(System.getProperty("fsst4j.native.dir", "target/native"), "fsst");
+		boolean windows = System.getProperty("os.name").startsWith("Windows");
+		return Path.of(System.getProperty("fsst4j.native.dir", "target/native"), windows ? "fsst.exe" : "fsst");
 	}
 }

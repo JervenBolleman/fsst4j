@@ -13,6 +13,6 @@
     ]
   },
   "resources": [
-    { "glob": "Linux/amd64/libfsst.so" }
+    { "glob": "native/**" }
   ]
 }

@@ -35,6 +35,16 @@
 	<build>
 		<plugins>
 			<plugin>
+				<!-- used by the release profile of the parent; the java 25 sources need the vector module -->
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<configuration>
+					<additionalOptions>
+						<additionalOption>--add-modules</additionalOption>
+						<additionalOption>jdk.incubator.vector</additionalOption>
+					</additionalOptions>
+				</configuration>
+			</plugin>
+			<plugin>
 				<!-- the java 25 only sources (FFM bindings, vector kernel) -->
 				<groupId>org.codehaus.mojo</groupId>
 				<artifactId>build-helper-maven-plugin</artifactId>
@@ -99,7 +109,7 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
 					<systemPropertyVariables>
-						<fsst4j.library>${native.dir}/libfsst.so</fsst4j.library>
+						<fsst4j.library>${native.dir}</fsst4j.library>
 						<fsst4j.native.dir>${native.dir}</fsst4j.native.dir>
 						<fsst4j.corpus.dir>${fsst.dir}/paper/dbtext</fsst4j.corpus.dir>
 					</systemPropertyVariables>
@@ -214,8 +224,10 @@
 									<goal>exec</goal>
 								</goals>
 								<configuration>
-									<executable>${project.basedir}/../scripts/build-native.sh</executable>
+									<!-- through bash, so it also works with Git Bash on windows -->
+									<executable>bash</executable>
 									<arguments>
+										<argument>${project.basedir}/../scripts/build-native.sh</argument>
 										<argument>${native.dir}</argument>
 									</arguments>
 								</configuration>

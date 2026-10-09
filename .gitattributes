@@ -1,0 +1,8 @@
+# keep unix line endings for scripts, also on windows checkouts
+*.sh text eol=lf
+# binaries
+*.so binary
+*.dylib binary
+*.dll binary
+mvnw text eol=lf
+*.cmd text eol=crlf
