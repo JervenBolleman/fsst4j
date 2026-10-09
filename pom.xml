@@ -14,110 +14,171 @@
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<maven.compiler.source>21</maven.compiler.source>
-		<maven.compiler.target>21</maven.compiler.target>
-		<maven.compiler.release>21</maven.compiler.release>
+		<maven.compiler.release>25</maven.compiler.release>
+		<picocli.version>4.7.7</picocli.version>
+		<junit.version>5.14.3</junit.version>
+		<!-- where scripts/build-native.sh puts libfsst.so and the upstream fsst tool -->
+		<native.dir>${project.build.directory}/native</native.dir>
+		<jvm.flags>--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</jvm.flags>
 	</properties>
 
 	<dependencies>
 		<dependency>
-			<groupId>junit</groupId>
-			<artifactId>junit</artifactId>
-			<version>4.11</version>
+			<groupId>info.picocli</groupId>
+			<artifactId>picocli</artifactId>
+			<version>${picocli.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${junit.version}</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
 
 	<build>
-		<pluginManagement><!-- lock down plugins versions to avoid using Maven
-			defaults (may be moved to parent pom) -->
+		<pluginManagement>
 			<plugins>
-				<!-- clean lifecycle, see
-				https://maven.apache.org/ref/current/maven-core/lifecycles.html#clean_Lifecycle -->
 				<plugin>
 					<artifactId>maven-clean-plugin</artifactId>
-					<version>3.1.0</version>
+					<version>3.5.0</version>
 				</plugin>
-				<!-- default lifecycle, jar packaging: see
-				https://maven.apache.org/ref/current/maven-core/default-bindings.html#Plugin_bindings_for_jar_packaging -->
 				<plugin>
 					<artifactId>maven-resources-plugin</artifactId>
-					<version>3.0.2</version>
+					<version>3.3.1</version>
 				</plugin>
 				<plugin>
 					<artifactId>maven-compiler-plugin</artifactId>
-					<version>3.8.0</version>
+					<version>3.14.1</version>
 				</plugin>
 				<plugin>
 					<artifactId>maven-surefire-plugin</artifactId>
-					<version>2.22.1</version>
+					<version>3.5.4</version>
 				</plugin>
 				<plugin>
 					<artifactId>maven-jar-plugin</artifactId>
-					<version>3.0.2</version>
+					<version>3.4.2</version>
+				</plugin>
+				<plugin>
+					<artifactId>maven-shade-plugin</artifactId>
+					<version>3.5.1</version>
 				</plugin>
 				<plugin>
 					<artifactId>maven-install-plugin</artifactId>
-					<version>2.5.2</version>
+					<version>3.1.2</version>
 				</plugin>
 				<plugin>
-					<artifactId>maven-deploy-plugin</artifactId>
-					<version>2.8.2</version>
-				</plugin>
-				<!-- site lifecycle, see
-				https://maven.apache.org/ref/current/maven-core/lifecycles.html#site_Lifecycle -->
-				<plugin>
-					<artifactId>maven-site-plugin</artifactId>
-					<version>3.7.1</version>
-				</plugin>
-				<plugin>
-					<artifactId>maven-project-info-reports-plugin</artifactId>
-					<version>3.0.0</version>
+					<groupId>org.codehaus.mojo</groupId>
+					<artifactId>exec-maven-plugin</artifactId>
+					<version>3.6.4</version>
 				</plugin>
 			</plugins>
 		</pluginManagement>
 		<plugins>
 			<plugin>
-				<groupId>io.github.coffeelibs</groupId>
-				<artifactId>jextract-maven-plugin</artifactId>
-				<version>0.1.0</version>
-				<configuration>
-					<executable>${user.home}/bin/jextract-21/bin/jextract</executable>
-					<headerSearchPaths>/usr/include/:${user.home}/git/fsst/</headerSearchPaths>
-				</configuration>
-				<executions>
-					<execution>
-						<id>jextract-ffst</id>
-						<goals>
-							<goal>sources</goal>
-						</goals>
-						<configuration>
-							<headerFile>${user.home}/git/fsst/fsst.h</headerFile>
-							<targetPackage>nl.cwi.da.fsst</targetPackage>
-							<headerClassName>fsst</headerClassName>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<configuration>
-					<release>21</release>
-					<compilerArgs>--enable-preview</compilerArgs>
+					<compilerArgs>
+						<arg>--add-modules</arg>
+						<arg>jdk.incubator.vector</arg>
+					</compilerArgs>
 				</configuration>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
-					<argLine>--enable-preview</argLine>
+					<argLine>${jvm.flags}</argLine>
 					<systemPropertyVariables>
-						<propertyName>java.library.path</propertyName>
-						<buildDirectory>${user.home}/git/fsst/</buildDirectory>
+						<fsst4j.library>${native.dir}/libfsst.so</fsst4j.library>
+						<fsst4j.native.dir>${native.dir}</fsst4j.native.dir>
+						<fsst4j.corpus.dir>${project.basedir}/fsst/paper/dbtext</fsst4j.corpus.dir>
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<configuration>
+					<archive>
+						<manifestEntries>
+							<Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+						</manifestEntries>
+					</archive>
+				</configuration>
+			</plugin>
+			<plugin>
+				<!-- a runnable jar for the command line utility -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<shadedArtifactAttached>true</shadedArtifactAttached>
+							<shadedClassifierName>cli</shadedClassifierName>
+							<createDependencyReducedPom>false</createDependencyReducedPom>
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/MANIFEST.MF</exclude>
+										<exclude>META-INF/versions/9/module-info.class</exclude>
+									</excludes>
+								</filter>
+							</filters>
+							<transformers>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>swiss.sib.swissprot.fsst4j.cli.FsstCli</mainClass>
+									<manifestEntries>
+										<Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+									</manifestEntries>
+								</transformer>
+							</transformers>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
+
+	<profiles>
+		<profile>
+			<!-- Builds libfsst and the upstream fsst tool from the git submodule, so the tests run against the
+			     submodule sources and the C++/Java interoperability tests can run. -->
+			<id>native</id>
+			<activation>
+				<file>
+					<exists>${basedir}/fsst/fsst.h</exists>
+				</file>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>build-native</id>
+								<phase>generate-test-resources</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>${project.basedir}/scripts/build-native.sh</executable>
+									<arguments>
+										<argument>${native.dir}</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>

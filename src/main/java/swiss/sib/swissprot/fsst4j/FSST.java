@@ -1,190 +1,161 @@
 package swiss.sib.swissprot.fsst4j;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 
-import nl.cwi.da.fsst.fsst;
+/**
+ * Entry point for FSST (Fast Static Symbol Table) compression of batches of strings.
+ *
+ * Three implementations are available, which all produce identical output:
+ * <ul>
+ * <li>{@link Implementation#JAVA}: pure java, see {@link FsstEncoder}</li>
+ * <li>{@link Implementation#JAVA_VECTOR}: pure java, compressing with the jdk.incubator.vector API</li>
+ * <li>{@link Implementation#NATIVE}: the C++ libfsst via the FFM API, see {@link NativeFsst}</li>
+ * </ul>
+ * Decompression is always done in java, see {@link FsstDecoder}.
+ */
+public final class FSST {
 
-public class FSST {
-	private static final byte[] FSST_CORRUPT = new byte[] { 'c', 'o', 'r', 'r', 'u', 'p', 't' };
-	static {
-		try {
-			File fsstTmp = File.createTempFile("libfsst", ".so");
-			fsstTmp.deleteOnExit();
-			String arch = ManagementFactory.getOperatingSystemMXBean().getArch();
-			String osName = ManagementFactory.getOperatingSystemMXBean().getName();
-			try (InputStream in = FSST.class.getResourceAsStream('/'+osName + '/' + arch + "/libfsst.so")) {
-				Files.copy(in, fsstTmp.toPath(), StandardCopyOption.REPLACE_EXISTING);
-			}
-			System.load(fsstTmp.getAbsolutePath());
-		} catch (IOException e) {
-			System.loadLibrary("fsst");
+	public enum Implementation {
+		JAVA, JAVA_VECTOR, NATIVE;
+
+		public boolean isAvailable() {
+			return switch (this) {
+			case JAVA -> true;
+			case JAVA_VECTOR -> FsstVectorCompressor.isSupported();
+			case NATIVE -> NativeFsst.isAvailable();
+			};
 		}
 	}
 
+	private FSST() {
+	}
+
+	/** Compress known length strings (UTF-8 encoded) with the pure java implementation. */
 	public static FsstCompressedData compress(String[] strings) {
 		return compress(Arrays.asList(strings));
 	}
 
-	public static FsstCompressedData compress(Collection<String> asList) {
-		int numberOfStrings = asList.size();
-		try (Arena arena = Arena.ofConfined()) {
-
-			long[] forLenIn = new long[numberOfStrings];
-			int totalLen = 0;
-			MemorySegment strIn = arena.allocate(fsst.C_POINTER.byteSize() * numberOfStrings);
-			Iterator<String> iterator = asList.iterator();
-			for (int i = 0; i < numberOfStrings; i++) {
-				MemorySegment strInRaw = arena.allocateUtf8String(iterator.next());
-				strIn.setAtIndex(fsst.C_POINTER, i, strInRaw);
-				forLenIn[i] = strInRaw.byteSize();
-				totalLen += strInRaw.byteSize();
-			}
-
-			MemorySegment lenIn = arena.allocateArray(fsst.size_t, forLenIn);
-			final MemorySegment encoder = fsst.fsst_create((long) numberOfStrings, lenIn, strIn, 1);
-			final MemorySegment compressedLengthsAsSegment = arena.allocate(totalLen * fsst.size_t.byteSize()); // lenOut
-			final MemorySegment compressedStartPointersAsSegment = arena.allocate(totalLen * fsst.C_POINTER.byteSize()); // strOut
-			long compressedSegmentSize = 7 + (2 * totalLen * fsst.size_t.byteSize()); // outsize
-			final MemorySegment compressedSegment = arena.allocate(compressedSegmentSize); // output
-
-			long compressedStrings = fsst.fsst_compress(encoder, numberOfStrings, lenIn, strIn, compressedSegmentSize,
-					compressedSegment, compressedLengthsAsSegment, compressedStartPointersAsSegment);
-			while (compressedStrings < numberOfStrings) {
-				throw new IllegalStateException("Not yet implemented");
-			}
-
-			int compressedSize = 0;
-			int[] compressedLengths = new int[numberOfStrings];
-			for (int i = 0; i < numberOfStrings; i++) {
-				long compressedLength = compressedLengthsAsSegment.getAtIndex(fsst.size_t, i);
-				compressedLengths[i] = (int) compressedLength;
-				compressedSize += compressedLength;
-			}
-			byte[] compressedOutput = compressedSegment.asSlice(0, compressedSize).toArray(ValueLayout.JAVA_BYTE);
-
-			MemorySegment encoderState = arena.allocate(2048);
-			int encoderSize = fsst.fsst_export(encoder, encoderState);
-			byte[] encoderSerialized = encoderState.asSlice(0, encoderSize).toArray(ValueLayout.JAVA_BYTE);
-			fsst.fsst_destroy(encoder);
-
-			return new FsstCompressedData(compressedLengths, compressedOutput, encoderSerialized);
-		}
+	/** Compress known length strings (UTF-8 encoded) with the pure java implementation. */
+	public static FsstCompressedData compress(Collection<String> strings) {
+		return compress(strings, false, Implementation.JAVA);
 	}
 
+	/**
+	 * Compress UTF-8 encoded strings.
+	 *
+	 * @param zeroTerminated if true each string is compressed with a terminating 0 byte (C string style)
+	 */
+	public static FsstCompressedData compress(Collection<String> strings, boolean zeroTerminated,
+			Implementation implementation) {
+		return compress(ByteStrings.ofUtf8(strings, zeroTerminated), zeroTerminated, implementation);
+	}
+
+	/**
+	 * Build a symbol table from the strings and compress them.
+	 *
+	 * @param zeroTerminated if true each (non empty) string must end with its only 0 byte, see {@link ByteStrings}
+	 */
+	public static FsstCompressedData compress(ByteStrings strings, boolean zeroTerminated,
+			Implementation implementation) {
+		return switch (implementation) {
+		case JAVA -> FsstEncoder.build(strings, zeroTerminated).compress(strings, FsstEncoder.Kernel.SCALAR);
+		case JAVA_VECTOR -> FsstEncoder.build(strings, zeroTerminated).compress(strings, FsstEncoder.Kernel.VECTOR);
+		case NATIVE -> {
+			try (NativeFsst.Encoder encoder = NativeFsst.Encoder.create(strings, zeroTerminated)) {
+				yield encoder.compress(strings);
+			}
+		}
+		};
+	}
+
+	/**
+	 * A batch of compressed strings.
+	 *
+	 * @param compressedLengths the length of each compressed string
+	 * @param compressedData    the compressed strings, one after the other
+	 * @param encoderSerialized the symbol table, as serialized by fsst_export()
+	 */
 	public record FsstCompressedData(int[] compressedLengths, byte[] compressedData, byte[] encoderSerialized) {
 
+		public int size() {
+			return compressedLengths.length;
+		}
+
+		/** @return the start of each compressed string in compressedData */
+		public int[] offsets() {
+			int[] offsets = new int[compressedLengths.length];
+			int pos = 0;
+			for (int i = 0; i < offsets.length; i++) {
+				offsets[i] = pos;
+				pos += compressedLengths[i];
+			}
+			return offsets;
+		}
+
+		public FsstDecoder decoder() {
+			return FsstDecoder.importTable(encoderSerialized, 0);
+		}
+
+		/** @return the decompressed strings as bytes (with terminating 0 byte for zero terminated strings) */
+		public List<byte[]> decode() {
+			FsstDecoder decoder = decoder();
+			int[] offsets = offsets();
+			return new Decompressing<>(size()) {
+				@Override
+				public byte[] get(int index) {
+					Objects.checkIndex(index, size());
+					return decoder.decompress(compressedData, offsets[index], compressedLengths[index]);
+				}
+			};
+		}
+
+		/** @return the decompressed strings as UTF-8 text (without terminating 0 for zero terminated strings) */
 		public List<String> decodeAsStrings() {
-			return new DecompressingOnDemandList(this);
+			FsstDecoder decoder = decoder();
+			int[] offsets = offsets();
+			return new Decompressing<>(size()) {
+				@Override
+				public String get(int index) {
+					Objects.checkIndex(index, size());
+					return decoder.decompressToString(compressedData, offsets[index], compressedLengths[index]);
+				}
+			};
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			return o instanceof FsstCompressedData other && Arrays.equals(compressedLengths, other.compressedLengths)
+					&& Arrays.equals(compressedData, other.compressedData)
+					&& Arrays.equals(encoderSerialized, other.encoderSerialized);
+		}
+
+		@Override
+		public int hashCode() {
+			return Arrays.hashCode(compressedData);
+		}
+
+		@Override
+		public String toString() {
+			return "FsstCompressedData[strings=" + size() + ", compressedBytes=" + compressedData.length
+					+ ", tableBytes=" + encoderSerialized.length + "]";
 		}
 	}
 
-	public static final class DecompressingOnDemandList extends AbstractList<String> {
+	/** An unmodifiable list that decompresses its elements on access. */
+	private abstract static class Decompressing<T> extends AbstractList<T> {
+		private final int size;
 
-		private final byte[][] decoderSymbols;
-		private final FsstCompressedData fsstCompressedData;
-
-		private DecompressingOnDemandList(FsstCompressedData fsstCompressedData) {
-			this.fsstCompressedData = fsstCompressedData;
-			ByteBuffer wrap = ByteBuffer.wrap(fsstCompressedData.encoderSerialized).order(ByteOrder.LITTLE_ENDIAN);
-			assert wrap.getLong() >> 32 == 20190218;
-			boolean zeroTerminated = wrap.get(8) != 0;
-			int[] lengthHisto = new int[8];
-			lengthHisto[0] = wrap.get(9) & 0xff;
-			lengthHisto[1] = wrap.get(10) & 0xff;
-			lengthHisto[2] = wrap.get(11) & 0xff;
-			lengthHisto[3] = wrap.get(12) & 0xff;
-			lengthHisto[4] = wrap.get(13) & 0xff;
-			lengthHisto[5] = wrap.get(14) & 0xff;
-			lengthHisto[6] = wrap.get(15) & 0xff;
-			lengthHisto[7] = wrap.get(16) & 0xff;
-			int code = 0;
-			if (zeroTerminated) {
-				lengthHisto[0]--;
-				code = 1;
-			}
-			int[] decoderLengths = new int[256];
-			decoderSymbols = new byte[256][];
-			decoderSymbols[0] = new byte[] {};
-			wrap.position(17);
-			for (int l = 1; l <= 8; l++) {
-				for (int i = 0; i < (lengthHisto[l & 7]); i++) {
-					int len = (l & 7) + 1;
-					decoderLengths[code] = len;
-					decoderSymbols[code] = new byte[len];
-					for (int j = 0; j < len; j++) {
-						decoderSymbols[code][j] = wrap.get();
-					}
-					code++;
-				}
-			}
-			if (zeroTerminated) {
-				lengthHisto[0]++;
-			}
-			while (code < 255) {
-				decoderSymbols[code++] = FSST_CORRUPT;
-			}
+		Decompressing(int size) {
+			this.size = size;
 		}
 
 		@Override
 		public int size() {
-			return fsstCompressedData.compressedLengths.length;
-		}
-
-		@Override
-		public boolean addAll(Collection<? extends String> c) {
-			throw new UnsupportedOperationException("Not modifiable");
-		}
-
-		@Override
-		public String get(int index) {
-			Objects.checkIndex(index, size());
-			int offsetToRequestedString = 0;
-			int compressedLength = fsstCompressedData.compressedLengths[0];
-			for (int i = 0; i < index && i < fsstCompressedData.compressedLengths.length; i++) {
-				compressedLength = fsstCompressedData.compressedLengths[i];
-				offsetToRequestedString += compressedLength;
-			}
-			byte[] decompressed = new byte[256];
-			int j = 0;
-			for (int i = offsetToRequestedString; i < offsetToRequestedString + compressedLength; i++) {
-				byte r = fsstCompressedData.compressedData[i];
-				if ((r & 0xff) == 255) {
-					decompressed = grow(decompressed, 1, j);
-					decompressed[j++] = fsstCompressedData.compressedData[i++];
-				} else {
-					byte[] rawSymbol = decoderSymbols[r];
-					decompressed = grow(decompressed, rawSymbol.length, j);
-					System.arraycopy(rawSymbol, 0, decompressed, j, rawSymbol.length);
-					j += rawSymbol.length;
-				}
-			}
-			return new String(decompressed, 0, j, StandardCharsets.UTF_8);
-		}
-
-		private byte[] grow(byte[] decompressed, int neededSpace, int usedSpace) {
-			if (decompressed.length < neededSpace + usedSpace) {
-				return Arrays.copyOf(decompressed, decompressed.length * 2);
-			}
-			return decompressed;
+			return size;
 		}
 	}
-
 }
