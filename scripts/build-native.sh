@@ -27,12 +27,6 @@ if [ ! -f "$SRC/fsst.h" ]; then
    exit 1
 fi
 
-case "$(uname -m)" in
-   x86_64|amd64) ARCH=amd64; SIMDFLAGS="-mavx512f -mavx512dq" ;;
-   aarch64|arm64) ARCH=aarch64; SIMDFLAGS="" ;;
-   *) ARCH=$(uname -m | tr -cd 'a-z0-9'); SIMDFLAGS="" ;;
-esac
-
 # -fsigned-char: libfsst compares a char with the terminator byte, make that behave as on x86 everywhere (ARM has
 # unsigned char), so the symbol tables are identical on all platforms and to the java implementation.
 CXXFLAGS="-std=c++17 -O3 -DNDEBUG -fsigned-char ${EXTRA_CXXFLAGS:-}"
@@ -65,6 +59,15 @@ case "$(uname -s)" in
       SHARED="-shared"
       ;;
    *) echo "unsupported os $(uname -s)" >&2; exit 1 ;;
+esac
+
+# the architecture the compiler targets. Not uname -m: under MSYS2 on Windows on ARM, uname reports x86_64 because
+# the MSYS2 runtime runs emulated, while the clang toolchain targets aarch64.
+MACHINE=$("$CXX" -dumpmachine 2>/dev/null || uname -m)
+case "${MACHINE%%-*}" in
+   x86_64|amd64) ARCH=amd64; SIMDFLAGS="-mavx512f -mavx512dq" ;;
+   aarch64|arm64) ARCH=aarch64; SIMDFLAGS="" ;;
+   *) ARCH=$(echo "${MACHINE%%-*}" | tr -cd 'a-z0-9'); SIMDFLAGS="" ;;
 esac
 
 echo "building $LIB and $EXE for $OS-$ARCH with $CXX into $OUT"
