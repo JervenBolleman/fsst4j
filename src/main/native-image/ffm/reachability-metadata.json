@@ -1,0 +1,18 @@
+{
+  "comment": "GraalVM native-image metadata for the FFM bindings in NativeFsst, the downcall signatures of libfsst and the bundled library",
+  "foreign": {
+    "downcalls": [
+      { "returnType": "void*", "parameterTypes": ["jlong", "void*", "void*", "jint"] },
+      { "returnType": "void*", "parameterTypes": ["void*"] },
+      { "returnType": "jint", "parameterTypes": ["void*", "void*"] },
+      { "returnType": "void", "parameterTypes": ["void*"] },
+      { "returnType": "jlong", "parameterTypes": ["void*", "jlong", "void*", "void*", "jlong", "void*", "void*", "void*"] },
+      { "returnType": "jlong", "parameterTypes": ["void*", "jlong", "void*", "jlong", "void*"] },
+      { "returnType": "jlong", "parameterTypes": [] },
+      { "returnType": "jlong", "parameterTypes": ["void*"] }
+    ]
+  },
+  "resources": [
+    { "glob": "Linux/amd64/libfsst.so" }
+  ]
+}

@@ -12,8 +12,8 @@ import java.util.Objects;
  * Three implementations are available, which all produce identical output:
  * <ul>
  * <li>{@link Implementation#JAVA}: pure java, see {@link FsstEncoder}</li>
- * <li>{@link Implementation#JAVA_VECTOR}: pure java, compressing with the jdk.incubator.vector API</li>
- * <li>{@link Implementation#NATIVE}: the C++ libfsst via the FFM API, see {@link NativeFsst}</li>
+ * <li>{@link Implementation#JAVA_VECTOR}: pure java, compressing with the jdk.incubator.vector API (java 25+)</li>
+ * <li>{@link Implementation#NATIVE}: the C++ libfsst via the FFM API, see NativeFsst (java 25+)</li>
  * </ul>
  * Decompression is always done in java, see {@link FsstDecoder}.
  */
@@ -23,11 +23,22 @@ public final class FSST {
 		JAVA, JAVA_VECTOR, NATIVE;
 
 		public boolean isAvailable() {
-			return switch (this) {
-			case JAVA -> true;
-			case JAVA_VECTOR -> FsstVectorCompressor.isSupported();
-			case NATIVE -> NativeFsst.isAvailable();
-			};
+			switch (this) {
+			case JAVA_VECTOR:
+				return Accelerators.vectorSupported();
+			case NATIVE:
+				return Accelerators.nativeAvailable();
+			default:
+				return true;
+			}
+		}
+
+		/** @return why this implementation is not available, or null if it is */
+		public String unavailableReason() {
+			if (isAvailable()) {
+				return null;
+			}
+			return this == NATIVE ? Accelerators.nativeUnavailableReason() : Accelerators.vectorUnavailableReason();
 		}
 	}
 
@@ -61,25 +72,45 @@ public final class FSST {
 	 */
 	public static FsstCompressedData compress(ByteStrings strings, boolean zeroTerminated,
 			Implementation implementation) {
-		return switch (implementation) {
-		case JAVA -> FsstEncoder.build(strings, zeroTerminated).compress(strings, FsstEncoder.Kernel.SCALAR);
-		case JAVA_VECTOR -> FsstEncoder.build(strings, zeroTerminated).compress(strings, FsstEncoder.Kernel.VECTOR);
-		case NATIVE -> {
-			try (NativeFsst.Encoder encoder = NativeFsst.Encoder.create(strings, zeroTerminated)) {
-				yield encoder.compress(strings);
-			}
+		switch (implementation) {
+		case JAVA_VECTOR:
+			return FsstEncoder.build(strings, zeroTerminated).compress(strings, FsstEncoder.Kernel.VECTOR);
+		case NATIVE:
+			return Accelerators.nativeCompress(strings, zeroTerminated);
+		default:
+			return FsstEncoder.build(strings, zeroTerminated).compress(strings, FsstEncoder.Kernel.SCALAR);
 		}
-		};
 	}
 
 	/**
-	 * A batch of compressed strings.
+	 * A batch of compressed strings (a record, but written as a class for java 11).
 	 *
 	 * @param compressedLengths the length of each compressed string
 	 * @param compressedData    the compressed strings, one after the other
 	 * @param encoderSerialized the symbol table, as serialized by fsst_export()
 	 */
-	public record FsstCompressedData(int[] compressedLengths, byte[] compressedData, byte[] encoderSerialized) {
+	public static final class FsstCompressedData {
+		private final int[] compressedLengths;
+		private final byte[] compressedData;
+		private final byte[] encoderSerialized;
+
+		public FsstCompressedData(int[] compressedLengths, byte[] compressedData, byte[] encoderSerialized) {
+			this.compressedLengths = Objects.requireNonNull(compressedLengths);
+			this.compressedData = Objects.requireNonNull(compressedData);
+			this.encoderSerialized = Objects.requireNonNull(encoderSerialized);
+		}
+
+		public int[] compressedLengths() {
+			return compressedLengths;
+		}
+
+		public byte[] compressedData() {
+			return compressedData;
+		}
+
+		public byte[] encoderSerialized() {
+			return encoderSerialized;
+		}
 
 		public int size() {
 			return compressedLengths.length;
@@ -128,7 +159,11 @@ public final class FSST {
 
 		@Override
 		public boolean equals(Object o) {
-			return o instanceof FsstCompressedData other && Arrays.equals(compressedLengths, other.compressedLengths)
+			if (!(o instanceof FsstCompressedData)) {
+				return false;
+			}
+			FsstCompressedData other = (FsstCompressedData) o;
+			return Arrays.equals(compressedLengths, other.compressedLengths)
 					&& Arrays.equals(compressedData, other.compressedData)
 					&& Arrays.equals(encoderSerialized, other.encoderSerialized);
 		}

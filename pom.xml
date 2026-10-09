@@ -14,11 +14,17 @@
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- the multi-release jar: the jar root is compiled for java 11 (pure java implementation only), the full
+		     implementation (FFM, vector API) is in META-INF/versions/25 -->
 		<maven.compiler.release>25</maven.compiler.release>
+		<java.base.release>11</java.base.release>
+		<classes.java11>${project.build.directory}/classes-java11</classes.java11>
+		<mr.jar.dir>${project.build.directory}/mr-jar</mr.jar.dir>
 		<picocli.version>4.7.7</picocli.version>
 		<junit.version>5.14.3</junit.version>
 		<!-- where scripts/build-native.sh puts libfsst.so and the upstream fsst tool -->
 		<native.dir>${project.build.directory}/native</native.dir>
+		<native.image>native-image</native.image>
 		<jvm.flags>--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</jvm.flags>
 	</properties>
 
@@ -72,18 +78,94 @@
 					<artifactId>exec-maven-plugin</artifactId>
 					<version>3.6.4</version>
 				</plugin>
+				<plugin>
+					<groupId>org.codehaus.mojo</groupId>
+					<artifactId>build-helper-maven-plugin</artifactId>
+					<version>3.2.0</version>
+				</plugin>
+				<plugin>
+					<artifactId>maven-dependency-plugin</artifactId>
+					<version>3.7.0</version>
+				</plugin>
 			</plugins>
 		</pluginManagement>
 		<plugins>
 			<plugin>
+				<!-- the java 25 only sources (FFM bindings, vector kernel) -->
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>add-java25-sources</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>add-source</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>${project.basedir}/src/main/java25</source>
+							</sources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<configuration>
-					<compilerArgs>
-						<arg>--add-modules</arg>
-						<arg>jdk.incubator.vector</arg>
-					</compilerArgs>
+					<!-- generates the picocli reflection configuration for GraalVM native-image -->
+					<annotationProcessorPaths>
+						<path>
+							<groupId>info.picocli</groupId>
+							<artifactId>picocli-codegen</artifactId>
+							<version>${picocli.version}</version>
+						</path>
+					</annotationProcessorPaths>
 				</configuration>
+				<executions>
+					<execution>
+						<!-- full implementation: src/main/java + src/main/java25, tests run against these classes -->
+						<id>default-compile</id>
+						<configuration>
+							<compilerArgs>
+								<arg>--add-modules</arg>
+								<arg>jdk.incubator.vector</arg>
+								<arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+								<arg>-Adisable.proxy.config=true</arg>
+							</compilerArgs>
+						</configuration>
+					</execution>
+					<execution>
+						<!-- java 11 base: src/main/java + src/main/java11, the root of the multi-release jar -->
+						<id>compile-java11</id>
+						<phase>compile</phase>
+						<goals>
+							<goal>compile</goal>
+						</goals>
+						<configuration>
+							<release>${java.base.release}</release>
+							<compileSourceRoots>
+								<root>${project.basedir}/src/main/java</root>
+								<root>${project.basedir}/src/main/java11</root>
+							</compileSourceRoots>
+							<outputDirectory>${classes.java11}</outputDirectory>
+							<compilerArgs>
+								<arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+								<arg>-Adisable.proxy.config=true</arg>
+							</compilerArgs>
+						</configuration>
+					</execution>
+					<execution>
+						<id>default-testCompile</id>
+						<configuration>
+							<proc>none</proc>
+							<compilerArgs>
+								<arg>--add-modules</arg>
+								<arg>jdk.incubator.vector</arg>
+							</compilerArgs>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
@@ -96,13 +178,85 @@
 						<fsst4j.corpus.dir>${project.basedir}/fsst/paper/dbtext</fsst4j.corpus.dir>
 					</systemPropertyVariables>
 				</configuration>
+				<executions>
+					<execution>
+						<id>default-test</id>
+						<configuration>
+							<excludes>
+								<exclude>**/Java11BaseTest.java</exclude>
+							</excludes>
+						</configuration>
+					</execution>
+					<execution>
+						<!-- run against the java 11 base classes, as a java 11 runtime would see the jar -->
+						<id>java11-base</id>
+						<goals>
+							<goal>test</goal>
+						</goals>
+						<configuration>
+							<classesDirectory>${classes.java11}</classesDirectory>
+							<argLine>-Dfsst4j.base.classes=true</argLine>
+							<includes>
+								<include>**/Java11BaseTest.java</include>
+							</includes>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<!-- lay out the multi-release jar: java 11 classes at the root, java 25 classes in META-INF/versions/25 -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>mr-jar-base</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${mr.jar.dir}</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${classes.java11}</directory>
+								</resource>
+								<resource>
+									<directory>${project.build.outputDirectory}</directory>
+									<excludes>
+										<exclude>**/*.class</exclude>
+									</excludes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+					<execution>
+						<id>mr-jar-java25</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${mr.jar.dir}/META-INF/versions/25</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${project.build.outputDirectory}</directory>
+									<includes>
+										<include>**/*.class</include>
+									</includes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
 				<configuration>
+					<classesDirectory>${mr.jar.dir}</classesDirectory>
 					<archive>
 						<manifestEntries>
+							<Multi-Release>true</Multi-Release>
 							<Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
 						</manifestEntries>
 					</archive>
@@ -135,6 +289,7 @@
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
 									<mainClass>swiss.sib.swissprot.fsst4j.cli.FsstCli</mainClass>
 									<manifestEntries>
+										<Multi-Release>true</Multi-Release>
 										<Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
 									</manifestEntries>
 								</transformer>
@@ -172,6 +327,56 @@
 									<executable>${project.basedir}/scripts/build-native.sh</executable>
 									<arguments>
 										<argument>${native.dir}</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<!-- Builds the command line tool as a GraalVM native executable: target/fsst4j
+			     mvn -Pnative-image package (needs GraalVM 25+, set -Dnative.image=/path/to/native-image if it is not
+			     on the PATH). It is built from the java 25 classes, including the FFM bindings to libfsst, which needs
+			     the experimental foreign API support of native-image. -->
+			<id>native-image</id>
+			<build>
+				<plugins>
+					<plugin>
+						<artifactId>maven-dependency-plugin</artifactId>
+						<executions>
+							<execution>
+								<!-- sets the ${info.picocli:picocli:jar} property to the path of the picocli jar -->
+								<id>dependency-paths</id>
+								<goals>
+									<goal>properties</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>native-image</id>
+								<phase>package</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>${native.image}</executable>
+									<arguments>
+										<argument>-H:+UnlockExperimentalVMOptions</argument>
+										<argument>-H:+ForeignAPISupport</argument>
+										<argument>--enable-native-access=ALL-UNNAMED</argument>
+										<argument>-H:ConfigurationFileDirectories=${project.basedir}/src/main/native-image/ffm</argument>
+										<argument>-cp</argument>
+										<argument>${project.build.outputDirectory}${path.separator}${info.picocli:picocli:jar}</argument>
+										<argument>-o</argument>
+										<argument>${project.build.directory}/fsst4j</argument>
+										<argument>swiss.sib.swissprot.fsst4j.cli.FsstCli</argument>
 									</arguments>
 								</configuration>
 							</execution>

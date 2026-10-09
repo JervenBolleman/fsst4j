@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -22,7 +23,6 @@ import swiss.sib.swissprot.fsst4j.FSST.FsstCompressedData;
 import swiss.sib.swissprot.fsst4j.FSST.Implementation;
 import swiss.sib.swissprot.fsst4j.FsstBlockFormat;
 import swiss.sib.swissprot.fsst4j.FsstDecoder;
-import swiss.sib.swissprot.fsst4j.NativeFsst;
 
 /**
  * Command line utility. The compress and decompress commands use the same file format as the fsst tool of the C++
@@ -62,13 +62,8 @@ public final class FsstCli {
 
 	static void checkAvailable(Implementation implementation) {
 		if (!implementation.isAvailable()) {
-			String hint = switch (implementation) {
-			case JAVA_VECTOR -> "run java with --add-modules jdk.incubator.vector";
-			case NATIVE -> "native library could not be loaded: " + NativeFsst.loadError();
-			case JAVA -> "";
-			};
 			throw new CommandLine.ParameterException(new CommandLine(new FsstCli()),
-					implementation + " is not available, " + hint);
+					implementation + " is not available, " + implementation.unavailableReason());
 		}
 	}
 
@@ -145,7 +140,8 @@ public final class FsstCli {
 		@Override
 		public Integer call() throws IOException {
 			List<Implementation> impls = implementations != null ? implementations
-					: Arrays.stream(Implementation.values()).filter(Implementation::isAvailable).toList();
+					: Arrays.stream(Implementation.values()).filter(Implementation::isAvailable)
+							.collect(Collectors.toList());
 			impls.forEach(FsstCli::checkAvailable);
 			PrintStream out = System.out;
 			out.println("file\timplementation\tstrings\tbytes\tcompressed\tfactor\tcompressMB/s\tdecompressMB/s");
@@ -211,11 +207,11 @@ public final class FsstCli {
 	static final class Info implements Callable<Integer> {
 		@Override
 		public Integer call() {
+			System.out.println("java " + System.getProperty("java.version") + " (" + System.getProperty("java.vm.name")
+					+ ")");
 			for (Implementation impl : Implementation.values()) {
-				System.out.println(impl + "\t" + (impl.isAvailable() ? "available" : "not available"));
-			}
-			if (!NativeFsst.isAvailable()) {
-				System.out.println("native load error: " + NativeFsst.loadError());
+				System.out.println(impl + "\t" + (impl.isAvailable() ? "available" : "not available: "
+						+ impl.unavailableReason()));
 			}
 			return 0;
 		}

@@ -24,7 +24,17 @@ final class SymbolTableBuilder {
 	static final int SAMPLELINE = 512;
 
 	/** The sample to build the symbol table from: lines of possibly different arrays. */
-	private record Sample(byte[][] arrays, int[] offsets, int[] lengths) {
+	private static final class Sample {
+		final byte[][] arrays;
+		final int[] offsets;
+		final int[] lengths;
+
+		Sample(byte[][] arrays, int[] offsets, int[] lengths) {
+			this.arrays = arrays;
+			this.offsets = offsets;
+			this.lengths = lengths;
+		}
+
 		int size() {
 			return lengths.length;
 		}

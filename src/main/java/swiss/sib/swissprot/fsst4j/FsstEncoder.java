@@ -24,7 +24,7 @@ public final class FsstEncoder {
 	public enum Kernel {
 		/** port of the scalar compressBulk() */
 		SCALAR,
-		/** port of the AVX512 compressSIMD() using the jdk.incubator.vector API */
+		/** port of the AVX512 compressSIMD() using the jdk.incubator.vector API (java 25+) */
 		VECTOR,
 		/** pick one */
 		AUTO
@@ -128,17 +128,13 @@ public final class FsstEncoder {
 			kernel = autoKernel(strings, first, count);
 		}
 		if (kernel == Kernel.VECTOR) {
-			if (!FsstVectorCompressor.isSupported()) {
-				throw new UnsupportedOperationException(
-						"jdk.incubator.vector is not available, run with --add-modules jdk.incubator.vector");
-			}
-			return FsstVectorCompressor.compress(st, strings, first, count, out, outOff, outLen, lenOut, offOut);
+			return Accelerators.vectorCompress(st, strings, first, count, out, outOff, outLen, lenOut, offOut);
 		}
 		return compressBulk(strings, first, count, out, outOff, outLen, lenOut, offOut);
 	}
 
 	private Kernel autoKernel(ByteStrings strings, int first, int count) {
-		if (!FsstVectorCompressor.isPreferred()) {
+		if (!Accelerators.vectorPreferred()) {
 			return Kernel.SCALAR;
 		}
 		// same heuristic as fsst_compress(): simd needs 64 lines or more of length >=12; or fewer, but big ones

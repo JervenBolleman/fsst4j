@@ -25,7 +25,22 @@ public final class FsstBlockFormat {
 	public static final int BLOCK_SIZE = MEMBUF - (1 + FsstDecoder.MAX_HEADER / 2);
 
 	/** byte counts of a (de)compression run */
-	public record Stats(long in, long out) {
+	public static final class Stats {
+		private final long in;
+		private final long out;
+
+		public Stats(long in, long out) {
+			this.in = in;
+			this.out = out;
+		}
+
+		public long in() {
+			return in;
+		}
+
+		public long out() {
+			return out;
+		}
 	}
 
 	private FsstBlockFormat() {
@@ -83,9 +98,7 @@ public final class FsstBlockFormat {
 				output = new byte[Math.max(size, Math.min(MEMBUF, 2 * output.length))];
 			}
 			if (useNative) {
-				try (NativeFsst.Decoder nativeDecoder = NativeFsst.Decoder.importTable(block, 0)) {
-					nativeDecoder.decompress(block, hdr, block.length - hdr, output, 0, size);
-				}
+				Accelerators.nativeDecompress(block, block, hdr, block.length - hdr, output, 0, size);
 			} else {
 				decoder.decompress(block, hdr, block.length - hdr, output, 0, size);
 			}
