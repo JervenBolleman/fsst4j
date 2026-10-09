@@ -49,6 +49,8 @@ jobs:
             msystem: CLANGARM64
             toolchain: mingw-w64-clang-aarch64-clang
             cxx: clang++
+            # Temurin has no JDK 25 for windows on arm, Microsoft's OpenJDK build has
+            java-distribution: microsoft
             experimental: true
     steps:
       - uses: actions/checkout@v7
@@ -87,7 +89,7 @@ jobs:
 
       - uses: actions/setup-java@v6
         with:
-          distribution: temurin
+          distribution: ${{ matrix.java-distribution || 'temurin' }}
           java-version: 25
           cache: maven
 
