@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>swiss.sib.swissprot</groupId>
+		<artifactId>fsst4j-parent</artifactId>
+		<version>1.0-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>fsst4j-cli</artifactId>
+	<name>fsst4j-cli</name>
+	<description>Command line tool for FSST compression, compatible with the fsst tool of the C++ distribution</description>
+
+	<properties>
+		<!-- the cli only uses the public API of the library and runs on java 11 (with the pure java implementation) -->
+		<maven.compiler.release>${java.base.release}</maven.compiler.release>
+		<native.image>native-image</native.image>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>swiss.sib.swissprot</groupId>
+			<artifactId>fsst4j</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>info.picocli</groupId>
+			<artifactId>picocli</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>default-compile</id>
+						<configuration>
+							<!-- generates the picocli reflection configuration for GraalVM native-image -->
+							<annotationProcessorPaths>
+								<path>
+									<groupId>info.picocli</groupId>
+									<artifactId>picocli-codegen</artifactId>
+									<version>${picocli.version}</version>
+								</path>
+							</annotationProcessorPaths>
+							<compilerArgs>
+								<arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+								<arg>-Adisable.proxy.config=true</arg>
+							</compilerArgs>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<fsst4j.corpus.dir>${fsst.dir}/paper/dbtext</fsst4j.corpus.dir>
+					</systemPropertyVariables>
+				</configuration>
+			</plugin>
+			<plugin>
+				<!-- the jar of this module is a runnable jar including the library and picocli -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<createDependencyReducedPom>false</createDependencyReducedPom>
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/MANIFEST.MF</exclude>
+										<exclude>META-INF/versions/9/module-info.class</exclude>
+									</excludes>
+								</filter>
+							</filters>
+							<transformers>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>swiss.sib.swissprot.fsst4j.cli.FsstCli</mainClass>
+									<manifestEntries>
+										<!-- the library is a multi-release jar -->
+										<Multi-Release>true</Multi-Release>
+										<Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+									</manifestEntries>
+								</transformer>
+							</transformers>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<profiles>
+		<profile>
+			<!-- Builds the command line tool as a GraalVM native executable: cli/target/fsst4j
+			     mvn -Pnative-image package (needs GraalVM 25+, set -Dnative.image=/path/to/native-image if it is not
+			     on the PATH). It is built from the shaded jar, native-image picks the java 25 classes of the
+			     multi-release library, including the FFM bindings to libfsst, which needs the experimental foreign API
+			     support of native-image. -->
+			<id>native-image</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>native-image</id>
+								<phase>package</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>${native.image}</executable>
+									<arguments>
+										<argument>-H:+UnlockExperimentalVMOptions</argument>
+										<argument>-H:+ForeignAPISupport</argument>
+										<argument>--enable-native-access=ALL-UNNAMED</argument>
+										<argument>-H:ConfigurationFileDirectories=${project.basedir}/src/main/native-image/ffm</argument>
+										<argument>-jar</argument>
+										<argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+										<argument>-o</argument>
+										<argument>${project.build.directory}/fsst4j</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+</project>

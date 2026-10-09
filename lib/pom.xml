@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>swiss.sib.swissprot</groupId>
+		<artifactId>fsst4j-parent</artifactId>
+		<version>1.0-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>fsst4j</artifactId>
+	<name>fsst4j</name>
+	<description>FSST string compression: pure java implementation (java 11+), FFM bindings to libfsst and a vector
+		API compressor (java 25+)</description>
+
+	<properties>
+		<!-- the multi-release jar: the jar root is compiled for java 11 (pure java implementation only), the full
+		     implementation (FFM, vector API) is in META-INF/versions/25 -->
+		<classes.java11>${project.build.directory}/classes-java11</classes.java11>
+		<mr.jar.dir>${project.build.directory}/mr-jar</mr.jar.dir>
+		<!-- where scripts/build-native.sh puts libfsst.so and the upstream fsst tool -->
+		<native.dir>${project.build.directory}/native</native.dir>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<!-- the java 25 only sources (FFM bindings, vector kernel) -->
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>add-java25-sources</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>add-source</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>${project.basedir}/src/main/java25</source>
+							</sources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<executions>
+					<execution>
+						<!-- full implementation: src/main/java + src/main/java25, tests run against these classes -->
+						<id>default-compile</id>
+						<configuration>
+							<compilerArgs>
+								<arg>--add-modules</arg>
+								<arg>jdk.incubator.vector</arg>
+							</compilerArgs>
+						</configuration>
+					</execution>
+					<execution>
+						<!-- java 11 base: src/main/java + src/main/java11, the root of the multi-release jar -->
+						<id>compile-java11</id>
+						<phase>compile</phase>
+						<goals>
+							<goal>compile</goal>
+						</goals>
+						<configuration>
+							<release>${java.base.release}</release>
+							<compileSourceRoots>
+								<root>${project.basedir}/src/main/java</root>
+								<root>${project.basedir}/src/main/java11</root>
+							</compileSourceRoots>
+							<outputDirectory>${classes.java11}</outputDirectory>
+						</configuration>
+					</execution>
+					<execution>
+						<id>default-testCompile</id>
+						<configuration>
+							<compilerArgs>
+								<arg>--add-modules</arg>
+								<arg>jdk.incubator.vector</arg>
+							</compilerArgs>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<fsst4j.library>${native.dir}/libfsst.so</fsst4j.library>
+						<fsst4j.native.dir>${native.dir}</fsst4j.native.dir>
+						<fsst4j.corpus.dir>${fsst.dir}/paper/dbtext</fsst4j.corpus.dir>
+					</systemPropertyVariables>
+				</configuration>
+				<executions>
+					<execution>
+						<id>default-test</id>
+						<configuration>
+							<excludes>
+								<exclude>**/Java11BaseTest.java</exclude>
+							</excludes>
+						</configuration>
+					</execution>
+					<execution>
+						<!-- run against the java 11 base classes, as a java 11 runtime would see the jar -->
+						<id>java11-base</id>
+						<goals>
+							<goal>test</goal>
+						</goals>
+						<configuration>
+							<classesDirectory>${classes.java11}</classesDirectory>
+							<argLine>-Dfsst4j.base.classes=true</argLine>
+							<includes>
+								<include>**/Java11BaseTest.java</include>
+							</includes>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<!-- lay out the multi-release jar: java 11 classes at the root, java 25 classes in META-INF/versions/25 -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>mr-jar-base</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${mr.jar.dir}</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${classes.java11}</directory>
+								</resource>
+								<resource>
+									<directory>${project.build.outputDirectory}</directory>
+									<excludes>
+										<exclude>**/*.class</exclude>
+									</excludes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+					<execution>
+						<id>mr-jar-java25</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${mr.jar.dir}/META-INF/versions/25</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${project.build.outputDirectory}</directory>
+									<includes>
+										<include>**/*.class</include>
+									</includes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<configuration>
+					<classesDirectory>${mr.jar.dir}</classesDirectory>
+					<archive>
+						<manifestEntries>
+							<Multi-Release>true</Multi-Release>
+							<Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+						</manifestEntries>
+					</archive>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+	<profiles>
+		<profile>
+			<!-- Builds libfsst and the upstream fsst tool from the git submodule, so the tests run against the
+			     submodule sources and the C++/Java interoperability tests can run. -->
+			<id>native</id>
+			<activation>
+				<file>
+					<exists>${basedir}/../fsst/fsst.h</exists>
+				</file>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>build-native</id>
+								<phase>generate-test-resources</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>${project.basedir}/../scripts/build-native.sh</executable>
+									<arguments>
+										<argument>${native.dir}</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+</project>

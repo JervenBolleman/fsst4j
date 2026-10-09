@@ -3,7 +3,6 @@ package swiss.sib.swissprot.fsst4j;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,11 +15,9 @@ import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import swiss.sib.swissprot.fsst4j.FSST.FsstCompressedData;
 import swiss.sib.swissprot.fsst4j.FSST.Implementation;
-import swiss.sib.swissprot.fsst4j.cli.FsstCli;
 
 /**
  * Runs against the java 11 base classes of the multi-release jar (target/classes-java11, see the java11-base
@@ -28,9 +25,6 @@ import swiss.sib.swissprot.fsst4j.cli.FsstCli;
  * be reported as unavailable. Only uses API that exists in the java 11 base.
  */
 class Java11BaseTest {
-	@TempDir
-	Path tmp;
-
 	@BeforeAll
 	static void onlyOnBaseClasses() {
 		assertTrue(Boolean.getBoolean("fsst4j.base.classes"), "run by the java11-base surefire execution");
@@ -71,7 +65,7 @@ class Java11BaseTest {
 	}
 
 	@Test
-	void blockFormatAndCli() throws Exception {
+	void blockFormat() throws Exception {
 		byte[] data = "the quick brown fox jumps over the lazy dog\n".repeat(10_000).getBytes();
 		ByteArrayOutputStream compressed = new ByteArrayOutputStream();
 		FsstBlockFormat.compress(new ByteArrayInputStream(data), compressed, Implementation.JAVA);
@@ -79,10 +73,5 @@ class Java11BaseTest {
 		FsstBlockFormat.decompress(new ByteArrayInputStream(compressed.toByteArray()), decompressed, false);
 		assertArrayEquals(data, decompressed.toByteArray());
 
-		Path in = tmp.resolve("in");
-		Files.write(in, data);
-		assertEquals(0, FsstCli.run("compress", "-q", in.toString(), tmp.resolve("c").toString()));
-		assertArrayEquals(compressed.toByteArray(), Files.readAllBytes(tmp.resolve("c")));
-		assertNotEquals(0, FsstCli.run("compress", "-q", "-i", "native", in.toString(), tmp.resolve("n").toString()));
 	}
 }

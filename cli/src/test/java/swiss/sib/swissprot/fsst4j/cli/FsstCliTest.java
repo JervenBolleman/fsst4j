@@ -13,15 +13,15 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import swiss.sib.swissprot.fsst4j.NativeFsst;
-import swiss.sib.swissprot.fsst4j.TestSupport;
+import swiss.sib.swissprot.fsst4j.FSST.Implementation;
 
 class FsstCliTest {
 	@TempDir
 	Path tmp;
 
 	private Path sample() throws Exception {
-		Path hamlet = TestSupport.corpusDir().resolve("hamlet");
+		// the dbtext corpus of the FSST paper, from the fsst git submodule (see pom.xml)
+		Path hamlet = Path.of(System.getProperty("fsst4j.corpus.dir", "../fsst/paper/dbtext"), "hamlet");
 		if (Files.exists(hamlet)) {
 			return hamlet;
 		}
@@ -38,7 +38,7 @@ class FsstCliTest {
 		assertEquals(0, FsstCli.run("compress", "-q", in.toString(), compressed.toString()));
 		assertEquals(0, FsstCli.run("decompress", "-q", compressed.toString(), out.toString()));
 		assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(out));
-		if (NativeFsst.isAvailable()) {
+		if (Implementation.NATIVE.isAvailable()) {
 			Path nativeCompressed = tmp.resolve("n.fsst");
 			assertEquals(0, FsstCli.run("compress", "-q", "-i", "native", in.toString(), nativeCompressed.toString()));
 			assertArrayEquals(Files.readAllBytes(compressed), Files.readAllBytes(nativeCompressed));
@@ -65,7 +65,7 @@ class FsstCliTest {
 
 	@Test
 	void unavailableImplementationIsAnError() throws Exception {
-		assumeTrue(!NativeFsst.isAvailable());
+		assumeTrue(!Implementation.NATIVE.isAvailable());
 		assertNotEquals(0, FsstCli.run("compress", "-i", "native", sample().toString(), tmp.resolve("x").toString()));
 	}
 }
